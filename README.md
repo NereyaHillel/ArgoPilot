@@ -14,4 +14,3 @@ uv run uvicorn main:app --host 127.0.0.1 --port 8000
 ```
 
 Open http://127.0.0.1:8000/health. A running service returns `{"status": "ok"}`.
-test
