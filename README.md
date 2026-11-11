@@ -48,14 +48,19 @@ uv run uvicorn main:app --host 127.0.0.1 --port 8080
 
 ## Database
 
-The service uses SQLite by default (`registry.db` next to the code) and PostgreSQL in production. The `DATABASE_URL` setting chooses the database. It is read from the process environment first, then from a `.env` file in `services/registry-service` (`.env` is gitignored). Supported URLs:
+The service uses SQLite by default (`registry.db` next to the code) and PostgreSQL 12 or later in production. The `DATABASE_URL` setting chooses the database. It is read from the process environment first, then from a `.env` file in `services/registry-service` (`.env` is gitignored). Supported URLs:
 
 ```
 DATABASE_URL=sqlite:///registry.db
 DATABASE_URL=postgresql://user:password@host:5432/registry
 ```
 
-`.env.example` lists both styles; copy it to `.env` and uncomment one. Without `DATABASE_URL` the service uses `registry.db`. Any other URL scheme is an error. The API behaves the same on both databases.
+`.env.example` lists both styles; copy it to `.env` and uncomment one. Without `DATABASE_URL` the service uses `registry.db`. `DATABASE_URL` is read once at startup: an empty value, a value without a scheme or any other URL scheme stops the service with an error before it serves requests.
+
+The API behaves the same on both databases, except for two limits added so that PostgreSQL can store every accepted value. Both apply on SQLite too:
+
+- Text fields reject NUL characters with `422` (PostgreSQL text cannot hold them), and a catalogue id containing NUL answers `404`.
+- Farm and plot names are at most 255 characters (`422` above that), which keeps them within PostgreSQL's index size limit.
 
 To set up PostgreSQL, create the registry tables and sample data in an existing database with:
 
@@ -64,7 +69,7 @@ cd services/registry-service
 DATABASE_URL=postgresql://user:password@host:5432/registry uv run python seed_registry_pg.py
 ```
 
-The script never deletes anything: if any registry table already exists, it prints a message and exits without changing the database. When PostgreSQL is unreachable or busy (lock timeout, deadlock, serialization failure) the API answers `503`; other unexpected database errors answer `500`. Both use the `UNAVAILABLE` code.
+The script never deletes anything: if any registry table already exists, it prints a message and exits without changing the database. When PostgreSQL is unreachable or busy (no connection within 5 s, a lock wait over 5 s, a statement over 30 s, deadlock, serialization failure) the API answers `503`; other unexpected database errors answer `500`. Both use the `UNAVAILABLE` code.
 
 ## API
 
@@ -97,7 +102,9 @@ Each test drops and reseeds the registry tables in that database, so the databas
 
 ## Performance
 
-`GET` requests must have a p95 latency of at most 100 ms at 10 requests per second. Measured with Locust on the seeded data: **p95 = 20 ms, 0 failures** on SQLite and **p95 = 76 ms, 0 failures** on PostgreSQL (local Docker, one connection per request, 60 s at 10 requests per second).
+`GET` requests must have a p95 latency of at most 100 ms at 10 requests per second. Measured with Locust on the seeded data: **p95 = 20 ms, 0 failures** on SQLite and **p95 = 76 ms, 0 failures** on PostgreSQL (60 s at 10 requests per second).
+
+The PostgreSQL figure was measured against a database in a local Docker container. Most of it is the cost of opening a new connection for every request. A remote database, especially over TLS, adds network round trips to each of those connections, so latency there will be higher. If p95 exceeds 100 ms in that setup, the next step is a connection pool (`psycopg_pool`).
 
 ## Documentation
 

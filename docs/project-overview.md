@@ -46,7 +46,7 @@
 - **Python 3.12**, **FastAPI 0.115** + **Pydantic v2**, **uvicorn**
 - **SQLite** (default, local and tests) through the standard `sqlite3` module, or **PostgreSQL** (production) through `psycopg`, chosen by `DATABASE_URL`; **no ORM**
 - **uv** for environment and dependencies
-- **pytest** + FastAPI `TestClient`: **122 tests, all passing**
+- **pytest** + FastAPI `TestClient`: **186 tests**; 174 run and pass on SQLite and 183 on PostgreSQL (the rest are backend-specific and skipped)
 - **Locust** (run through `uvx`, so it is not a project dependency) for NFR-1.1
 
 ## 5. Architecture
@@ -115,9 +115,9 @@ Catalogue references (`crop_id`, `soil_id`, `emitter_id`, and `farm_id`) are che
 
 Writes follow "check, then write": does the farm exist, is the name free, then INSERT. Two concurrent requests could both pass the check, so:
 
-1. **`BEGIN IMMEDIATE`** takes SQLite's write lock *before* the checks. The check and the write are atomic, and every failure path rolls back.
-2. **The database constraints are the backstop.** `SQLITE_CONSTRAINT_UNIQUE` → 409 and `SQLITE_CONSTRAINT_FOREIGNKEY` → 422. The app checks give clear messages, and the constraints guarantee correctness.
-3. `PRAGMA foreign_keys = ON` on every connection, because SQLite turns FK enforcement off by default.
+1. **The write lock is taken *before* the checks.** On SQLite, `BEGIN IMMEDIATE` takes the database write lock. On PostgreSQL, `BEGIN` plus a transaction-scoped advisory lock (`pg_advisory_xact_lock`) that every writer takes gives the same guarantee. The check and the write are atomic, and every failure path rolls back.
+2. **The database constraints are the backstop.** A unique violation (`SQLITE_CONSTRAINT_UNIQUE`, PostgreSQL `23505`) → 409 and a foreign-key violation (`SQLITE_CONSTRAINT_FOREIGNKEY`, PostgreSQL `23503`) → 422. The app checks give clear messages, and the constraints guarantee correctness.
+3. `PRAGMA foreign_keys = ON` on every SQLite connection, because SQLite turns FK enforcement off by default. PostgreSQL always enforces them.
 
 This is also why uniqueness is **case-sensitive**: it matches what the `UNIQUE` index enforces, so the app rule and the database never disagree.
 
@@ -164,7 +164,7 @@ An unknown `farm_id` in a **body** is 422, not 404. The URL resource is fine and
 
 ## 8. Testing
 
-- **122 tests, all passing.** Each test seeds a **fresh `registry.db` in a temp directory** using the real `seed_registry.sh` and swaps it in through `app.dependency_overrides`. Tests are isolated, and the real DB is never touched.
+- **186 tests; 174 pass on SQLite and 183 on PostgreSQL** (backend-specific tests are skipped on the other one). Each test seeds a **fresh `registry.db` in a temp directory** using the real `seed_registry.sh` and swaps it in through `app.dependency_overrides`. Tests are isolated, and the real DB is never touched.
 - **FR coverage:** every CRUD status code, the `?farm_id=` filter, PATCH semantics (partial updates, moves, renames, keeping its own name), 405 on every non-GET catalogue method, and the "only spec fields" responses.
 - **FR-1.3 boundaries:** `lat=90` accepted, just above rejected, `area_m2=0` rejected, today (UTC) accepted, tomorrow rejected, numeric strings, infinity, and every failing field reported in one response.
 - **FR-1.4 failure modes:** problem+json shape for each code, missing DB → 503 + Retry-After, **locked DB → 503**, DB without schema → 500, unexpected exception → 500.
@@ -193,7 +193,7 @@ That is **5× under the 100 ms budget**. Caveats: it was measured on the seed da
 
 ## 11. Likely questions
 
-- **Why no ORM?** Five fixed tables and simple queries. Raw SQL keeps SQLite-specific behaviour visible (error names, `BEGIN IMMEDIATE`), and `repository.py` is the seam to swap later.
+- **Why no ORM?** Five fixed tables and simple queries. Raw SQL keeps each database's locking and error handling visible (`BEGIN IMMEDIATE` and SQLite error names, the PostgreSQL advisory lock and SQLSTATEs), and the few differences between the two databases live in `db.py`.
 - **How do you guarantee unique plot names under concurrency?** The lock is taken before checking, and the `UNIQUE` constraint maps to 409 as a backstop.
 - **Why 503 with `Retry-After` and not 500?** A missing or locked DB is a *transient* infrastructure problem, so the client should retry. A 500 means a bug.
 - **How do you make sure you return only the spec fields?** `response_model` on every route filters the output, and tests assert the exact key set.
