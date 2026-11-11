@@ -1,13 +1,14 @@
 import sqlite3
 from pathlib import Path
 
+import psycopg
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from support import FARM_DEMO, UNKNOWN_ID, database_from, plot_payload
 
 import repository
-from db import connect, get_db
+from db import connect, get_db, is_unavailable
 from errors import register_error_handlers
 from main import app
 
@@ -156,3 +157,34 @@ def test_body_that_is_not_utf8_json_is_a_422_validation_problem(client):
 
     body = assert_problem(response, 422, "VALIDATION")
     assert body["detail"] == "body: could not be read as JSON"
+
+
+@pytest.mark.parametrize(
+    ("sqlstate", "unavailable"),
+    [
+        *[(code, True) for code in ["08006", "57P01", "57P02", "57P03", "53300", "55P03"]],
+        *[(code, True) for code in ["57014", "40P01", "40001", "3D000"]],
+        *[(code, False) for code in ["28P01", "42P01", "23505", "54000"]],
+    ],
+)
+def test_postgres_error_is_unavailable_only_for_listed_sqlstates(sqlstate, unavailable):
+    assert is_unavailable(psycopg.errors.lookup(sqlstate)("x")) is unavailable
+
+
+@pytest.mark.parametrize(
+    ("message", "unavailable"),
+    [
+        ('connection to server at "h", port 5432 failed: Connection refused', True),
+        ("connection timeout expired", True),
+        ('FATAL:  database "registry" does not exist', True),
+        ('FATAL:  password authentication failed for user "registry"', False),
+        ('FATAL:  no pg_hba.conf entry for host "10.0.0.1", user "registry"', False),
+        ('FATAL:  role "registry" is not permitted to log in', False),
+        ("fe_sendauth: no password supplied", False),
+    ],
+)
+def test_connection_failure_without_sqlstate_is_unavailable_unless_credentials(
+    message, unavailable
+):
+    # libpq raises these with no SQLSTATE, so only the message tells a credentials problem apart.
+    assert is_unavailable(psycopg.OperationalError(message)) is unavailable

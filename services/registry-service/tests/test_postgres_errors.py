@@ -1,3 +1,5 @@
+import time
+
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
@@ -72,3 +74,23 @@ def test_backend_killed_mid_request_returns_503(db_url, monkeypatch):
     monkeypatch.setattr(repository, "insert_farm", kill_then_insert)
 
     assert_unavailable(request_with(db_url, "POST", json={"name": "Killed"}))
+
+
+def test_unroutable_server_returns_503_within_the_connect_timeout(db_url):
+    # 10.255.255.1 drops packets, so without a connect timeout libpq waits about two minutes.
+    started = time.monotonic()
+
+    response = request_with(make_conninfo(db_url, host="10.255.255.1"))
+
+    assert_unavailable(response)
+    assert time.monotonic() - started < db.PG_CONNECT_TIMEOUT_SECONDS + 3
+
+
+def test_every_connection_has_lock_and_statement_timeouts(db_url):
+    conn = db.connect_url(db_url)
+    try:
+        assert conn.execute("SHOW lock_timeout").fetchone()["lock_timeout"] == db.PG_LOCK_TIMEOUT
+        statement_timeout = conn.execute("SHOW statement_timeout").fetchone()["statement_timeout"]
+        assert statement_timeout == db.PG_STATEMENT_TIMEOUT
+    finally:
+        conn.close()

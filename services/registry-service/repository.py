@@ -27,6 +27,9 @@ PLOT_COLUMNS = frozenset(
         "lon",
     }
 )
+# No stored id can contain NUL, and Postgres rejects it in a query parameter, so a catalogue id
+# with NUL is simply not found on either backend.
+_NUL = "\x00"
 _PLOT_SELECT = (
     "SELECT id, farm_id, name, area_m2, crop_id, planting_date, soil_id, "
     "row_spacing_m, emitter_spacing_m, emitter_id, lat, lon FROM plots"
@@ -140,6 +143,8 @@ def list_crops(conn: Conn) -> list[Row]:
 
 
 def get_crop(conn: Conn, crop_id: str) -> Row | None:
+    if _NUL in crop_id:
+        return None
     return _row(conn, "SELECT id, name FROM crops WHERE id = ?", (crop_id,))
 
 
@@ -150,6 +155,8 @@ def list_soils(conn: Conn) -> list[Row]:
 
 
 def get_soil(conn: Conn, soil_id: str) -> Row | None:
+    if _NUL in soil_id:
+        return None
     return _row(
         conn,
         "SELECT id, name, available_water_mm_per_m FROM soils WHERE id = ?",
@@ -162,4 +169,6 @@ def list_emitters(conn: Conn) -> list[Row]:
 
 
 def get_emitter(conn: Conn, emitter_id: str) -> Row | None:
+    if _NUL in emitter_id:
+        return None
     return _row(conn, "SELECT id, name, flow_lph FROM emitters WHERE id = ?", (emitter_id,))

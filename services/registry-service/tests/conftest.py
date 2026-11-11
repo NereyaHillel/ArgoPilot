@@ -27,6 +27,13 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _no_env_file_database(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # A set DATABASE_URL wins over .env, so no test can reach the database a .env file names.
+    # The file does not exist, so a test that uses it by mistake gets a 503, not real data.
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'no-database.db'}")
+
+
+@pytest.fixture(autouse=True)
 def _restore_dependencies() -> Iterator[None]:
     yield
     app.dependency_overrides.clear()

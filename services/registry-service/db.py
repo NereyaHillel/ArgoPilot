@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import psycopg
-from fastapi import Depends
+from fastapi import Depends, Request
 from psycopg.pq import TransactionStatus
 from psycopg.rows import dict_row
 
@@ -15,6 +15,7 @@ import config
 DB_PATH = Path(__file__).resolve().parent / "registry.db"
 
 # `?` and `:name` placeholders as written in the SQL; `::` (a Postgres cast) is left alone.
+# SQL passed through it must not contain `?`, `:word` or `%` inside string literals.
 _PLACEHOLDER = re.compile(r"\?|(?<!:):(\w+)")
 
 
@@ -37,7 +38,16 @@ class PgConnection:
     """A psycopg connection that takes the same SQL and parameters as sqlite3."""
 
     def __init__(self, url: str) -> None:
-        self._conn = psycopg.connect(url, autocommit=True, row_factory=dict_row)
+        # The timeouts go in the startup packet, so they cost no extra round trip.
+        self._conn = psycopg.connect(
+            url,
+            autocommit=True,
+            row_factory=dict_row,
+            connect_timeout=PG_CONNECT_TIMEOUT_SECONDS,
+            options=(
+                f"-c lock_timeout={PG_LOCK_TIMEOUT} -c statement_timeout={PG_STATEMENT_TIMEOUT}"
+            ),
+        )
 
     def execute(self, sql: str, params: tuple[Any, ...] | dict[str, Any] = ()) -> psycopg.Cursor:
         sql = _PLACEHOLDER.sub(lambda m: "%s" if m[0] == "?" else f"%({m[1]})s", sql)
@@ -64,8 +74,9 @@ def connect_url(url: str) -> Conn:
     return PgConnection(url)
 
 
-def get_db() -> Iterator[Conn]:
-    conn = connect_url(config.database_url())
+def get_db(request: Request) -> Iterator[Conn]:
+    # main.py resolves DATABASE_URL once at startup.
+    conn = connect_url(request.app.state.database_url)
     try:
         yield conn
     finally:
@@ -77,14 +88,28 @@ DbConn = Annotated[Conn, Depends(get_db)]
 
 # Any fixed key works; every Postgres writer takes this one lock, like SQLite's single write lock.
 PG_WRITE_LOCK_KEY = 0x52454749
-# How long a writer waits for that lock before giving up with a 503. Tests shorten it.
+# How long any statement waits for a lock (including that one) before giving up with a 503.
+# Tests shorten it.
 PG_LOCK_TIMEOUT = "5s"
+# Longest a single statement may run before Postgres cancels it (57014, a 503).
+PG_STATEMENT_TIMEOUT = "30s"
+# libpq waits about two minutes for an unreachable host by default.
+PG_CONNECT_TIMEOUT_SECONDS = 5
 
 # Database states that mean "unreachable or busy, try again". Any other database error is a bug.
 UNAVAILABLE_SQLITE_ERRORS = frozenset({"SQLITE_CANTOPEN", "SQLITE_BUSY", "SQLITE_LOCKED"})
 # Postgres SQLSTATEs with the same meaning; class 08 (connection exceptions) is matched by prefix.
 UNAVAILABLE_PG_SQLSTATES = frozenset(
     {"57P01", "57P02", "57P03", "53300", "55P03", "57014", "40P01", "40001", "3D000"}
+)
+
+# libpq's English messages for credentials the server refuses: a configuration bug, so 500.
+# Kept narrow on purpose; anything else without a SQLSTATE is treated as an outage.
+PG_CREDENTIAL_ERRORS = (
+    "authentication failed",
+    "no pg_hba.conf entry",
+    "is not permitted to log in",
+    "no password supplied",
 )
 
 INTEGRITY_ERRORS: tuple[type[Exception], ...] = (sqlite3.IntegrityError, psycopg.IntegrityError)
@@ -98,7 +123,6 @@ def write_transaction(conn: Conn) -> Iterator[None]:
     conn.execute("BEGIN" if isinstance(conn, PgConnection) else "BEGIN IMMEDIATE")
     try:
         if isinstance(conn, PgConnection):
-            conn.execute(f"SET LOCAL lock_timeout = '{PG_LOCK_TIMEOUT}'")
             conn.execute(f"SELECT pg_advisory_xact_lock({PG_WRITE_LOCK_KEY})")
         yield
     except BaseException:
@@ -116,7 +140,10 @@ def is_unavailable(exc: Exception) -> bool:
     if exc.sqlstate is None:
         # libpq fails to connect without a SQLSTATE, whether the server is down, the database
         # is missing or the password is wrong. Only the message tells bad credentials apart.
-        return isinstance(exc, psycopg.OperationalError) and "authentication failed" not in str(exc)
+        message = str(exc)
+        return isinstance(exc, psycopg.OperationalError) and not any(
+            text in message for text in PG_CREDENTIAL_ERRORS
+        )
     return exc.sqlstate.startswith("08") or exc.sqlstate in UNAVAILABLE_PG_SQLSTATES
 
 

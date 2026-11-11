@@ -11,11 +11,18 @@ SUPPORTED_SCHEMES = {"sqlite", "postgresql", "postgres"}
 
 
 def database_url(env_file: Path = ENV_FILE) -> str:
-    # A real environment variable wins over .env; os.environ is never modified.
-    url = os.environ.get("DATABASE_URL") or dotenv_values(env_file).get("DATABASE_URL")
-    if not url:
+    # A real environment variable wins over .env, even when empty; os.environ is never modified.
+    url = os.environ.get("DATABASE_URL")
+    if url is None:
+        url = dotenv_values(env_file).get("DATABASE_URL")
+    if url is None:
         return DEFAULT_SQLITE_URL
+    if not url:
+        raise ValueError("empty DATABASE_URL; unset it to use registry.db")
+    # Messages name only the scheme, since the URL may hold a password.
     scheme = urlsplit(url).scheme
+    if not scheme:
+        raise ValueError("DATABASE_URL has no scheme; expected sqlite:/// or postgresql://")
     if scheme not in SUPPORTED_SCHEMES:
         raise ValueError(f"Unsupported DATABASE_URL scheme: {scheme!r}")
     return url

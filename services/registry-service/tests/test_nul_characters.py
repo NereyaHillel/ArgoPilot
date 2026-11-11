@@ -42,3 +42,12 @@ def test_name_without_nul_is_still_accepted(client):
     response = client.post("/v1/farms", json={"name": "ab"})
 
     assert response.status_code == 201
+
+
+@pytest.mark.parametrize("catalogue", ["crops", "soils", "emitters"])
+def test_catalogue_id_with_nul_is_not_found(client, catalogue):
+    # No stored id can contain NUL, so both backends answer 404 rather than a database error.
+    response = client.get(f"/v1/{catalogue}/a%00b")
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "NOT_FOUND"

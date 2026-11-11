@@ -277,3 +277,19 @@ def test_blank_plot_name_is_rejected(client):
     response = client.post("/v1/plots", json=plot_payload(name="  "))
 
     assert response.status_code == 422
+
+
+def test_plot_name_of_255_characters_is_accepted(client):
+    # 4-byte characters: the longest name in bytes that the unique index must hold.
+    response = client.post("/v1/plots", json=plot_payload(name="😀" * 255))
+
+    assert response.status_code == 201
+    assert response.json()["name"] == "😀" * 255
+
+
+def test_plot_name_of_256_characters_is_rejected(client):
+    response = client.post("/v1/plots", json=plot_payload(name="p" * 256))
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "VALIDATION"
+    assert response.json()["detail"] == "name: String should have at most 255 characters"

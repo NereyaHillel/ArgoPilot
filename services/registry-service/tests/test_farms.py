@@ -89,6 +89,21 @@ def test_blank_farm_name_is_rejected(client, name):
     assert response.json()["code"] == "VALIDATION"
 
 
+def test_farm_name_of_255_characters_is_accepted(client):
+    response = client.post("/v1/farms", json={"name": "f" * 255})
+
+    assert response.status_code == 201
+    assert response.json()["name"] == "f" * 255
+
+
+def test_farm_name_of_256_characters_is_rejected(client):
+    response = client.post("/v1/farms", json={"name": "f" * 256})
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "VALIDATION"
+    assert response.json()["detail"] == "name: String should have at most 255 characters"
+
+
 def test_patch_rejects_null_name(client):
     response = client.patch(f"/v1/farms/{FARM_EAST}", json={"name": None})
 

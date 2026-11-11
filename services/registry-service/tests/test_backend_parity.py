@@ -4,11 +4,13 @@ from support import plot_payload
 
 # These run on whichever backend the suite targets, so both must give the same answers.
 
-LONG_NAME = "z" * 10_000
+# Names at the maximum allowed length, in 1-byte and in 4-byte characters.
+LONG_NAME = "z" * 255
+LONG_EMOJI_NAME = "😀" * 255
 INJECTION = "'; DROP TABLE farms;--"
-FARM_NAMES = ["banana", "😀", LONG_NAME, "Apple", INJECTION, "éclair"]
+FARM_NAMES = ["banana", "😀", LONG_NAME, "Apple", INJECTION, LONG_EMOJI_NAME, "éclair"]
 # Byte-wise UTF-8 order, as SQLite compares text.
-BYTEWISE_ORDER = [INJECTION, "Apple", "banana", LONG_NAME, "éclair", "😀"]
+BYTEWISE_ORDER = [INJECTION, "Apple", "banana", LONG_NAME, "éclair", "😀", LONG_EMOJI_NAME]
 
 
 def test_farm_list_is_ordered_bytewise_and_names_round_trip(client):

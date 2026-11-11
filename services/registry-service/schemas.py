@@ -26,7 +26,8 @@ def _not_in_future(value: date) -> date:
     return value
 
 
-Name = Annotated[str, AfterValidator(_not_blank)]
+# 255 keeps a name well inside Postgres's index row limit for UNIQUE (farm_id, name).
+Name = Annotated[str, Field(max_length=255), AfterValidator(_not_blank)]
 RefId = Annotated[str, AfterValidator(_no_nul)]
 PositiveNumber = Annotated[float, Field(gt=0, strict=True, allow_inf_nan=False)]
 Latitude = Annotated[float, Field(ge=-90, le=90, strict=True, allow_inf_nan=False)]
