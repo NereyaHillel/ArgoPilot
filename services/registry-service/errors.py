@@ -3,19 +3,19 @@ import sqlite3
 from http import HTTPStatus
 from typing import Any, ClassVar
 
+import psycopg
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.routing import Route
 
+from db import is_unavailable
+
 logger = logging.getLogger(__name__)
 
 PROBLEM_MEDIA_TYPE = "application/problem+json"
 RETRY_AFTER_SECONDS = 5
-
-# Database states that mean "unreachable or busy, try again". Any other SQLite error is a bug.
-UNAVAILABLE_SQLITE_ERRORS = frozenset({"SQLITE_CANTOPEN", "SQLITE_BUSY", "SQLITE_LOCKED"})
 
 # The spec's code list has no entry for 405, so it maps to VALIDATION.
 FRAMEWORK_CODES = {404: "NOT_FOUND", 405: "VALIDATION"}
@@ -123,8 +123,10 @@ async def _handle_validation_error(request: Request, exc: RequestValidationError
     return problem_response(422, "VALIDATION", detail)
 
 
-async def _handle_sqlite_error(request: Request, exc: sqlite3.Error) -> JSONResponse:
-    if getattr(exc, "sqlite_errorname", None) in UNAVAILABLE_SQLITE_ERRORS:
+async def _handle_database_error(
+    request: Request, exc: sqlite3.Error | psycopg.Error
+) -> JSONResponse:
+    if is_unavailable(exc):
         logger.warning("registry database unavailable: %s", exc)
         return await _handle_problem(
             request, UnavailableProblem("Registry database is unavailable; retry later")
@@ -141,5 +143,6 @@ def register_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ApiProblem, _handle_problem)
     app.add_exception_handler(StarletteHTTPException, _handle_http_error)
     app.add_exception_handler(RequestValidationError, _handle_validation_error)
-    app.add_exception_handler(sqlite3.Error, _handle_sqlite_error)
+    app.add_exception_handler(sqlite3.Error, _handle_database_error)
+    app.add_exception_handler(psycopg.Error, _handle_database_error)
     app.add_exception_handler(Exception, _handle_unexpected)

@@ -77,6 +77,15 @@ DbConn = Annotated[Conn, Depends(get_db)]
 
 # Any fixed key works; every Postgres writer takes this one lock, like SQLite's single write lock.
 PG_WRITE_LOCK_KEY = 0x52454749
+# How long a writer waits for that lock before giving up with a 503. Tests shorten it.
+PG_LOCK_TIMEOUT = "5s"
+
+# Database states that mean "unreachable or busy, try again". Any other database error is a bug.
+UNAVAILABLE_SQLITE_ERRORS = frozenset({"SQLITE_CANTOPEN", "SQLITE_BUSY", "SQLITE_LOCKED"})
+# Postgres SQLSTATEs with the same meaning; class 08 (connection exceptions) is matched by prefix.
+UNAVAILABLE_PG_SQLSTATES = frozenset(
+    {"57P01", "57P02", "57P03", "53300", "55P03", "57014", "40P01", "40001", "3D000"}
+)
 
 INTEGRITY_ERRORS: tuple[type[Exception], ...] = (sqlite3.IntegrityError, psycopg.IntegrityError)
 
@@ -89,7 +98,7 @@ def write_transaction(conn: Conn) -> Iterator[None]:
     conn.execute("BEGIN" if isinstance(conn, PgConnection) else "BEGIN IMMEDIATE")
     try:
         if isinstance(conn, PgConnection):
-            conn.execute("SET LOCAL lock_timeout = '5s'")
+            conn.execute(f"SET LOCAL lock_timeout = '{PG_LOCK_TIMEOUT}'")
             conn.execute(f"SELECT pg_advisory_xact_lock({PG_WRITE_LOCK_KEY})")
         yield
     except BaseException:
@@ -97,6 +106,18 @@ def write_transaction(conn: Conn) -> Iterator[None]:
             conn.execute("ROLLBACK")
         raise
     conn.execute("COMMIT")
+
+
+def is_unavailable(exc: Exception) -> bool:
+    if isinstance(exc, sqlite3.Error):
+        return getattr(exc, "sqlite_errorname", None) in UNAVAILABLE_SQLITE_ERRORS
+    if not isinstance(exc, psycopg.Error):
+        return False
+    if exc.sqlstate is None:
+        # libpq fails to connect without a SQLSTATE, whether the server is down, the database
+        # is missing or the password is wrong. Only the message tells bad credentials apart.
+        return isinstance(exc, psycopg.OperationalError) and "authentication failed" not in str(exc)
+    return exc.sqlstate.startswith("08") or exc.sqlstate in UNAVAILABLE_PG_SQLSTATES
 
 
 def is_unique_violation(exc: Exception) -> bool:
