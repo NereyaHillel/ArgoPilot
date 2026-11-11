@@ -5,6 +5,7 @@ description = "AgroPilot registry service."
 requires-python = ">=3.12"
 dependencies = [
     "fastapi~=0.115.0",
+    "psycopg[binary]>=3.3.8",
     "python-dotenv>=1.2.4",
     "uvicorn~=0.32.0",
 ]
@@ -21,3 +22,7 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "sqlite_only: runs only when TEST_DATABASE_URL is not set",
+    "postgres_only: runs only when TEST_DATABASE_URL is set",
+]
