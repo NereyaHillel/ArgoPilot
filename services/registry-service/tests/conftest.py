@@ -3,12 +3,14 @@ import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 
+import psycopg
 import pytest
 from fastapi.testclient import TestClient
-from support import database_from
+from support import database_from_url
 
 from db import get_db
 from main import app
+from seed_registry_pg import TABLES, seed
 
 SERVICE_DIR = Path(__file__).resolve().parents[1]
 
@@ -43,6 +45,20 @@ def seeded_db(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def client(seeded_db: Path) -> TestClient:
-    app.dependency_overrides[get_db] = database_from(seeded_db)
+def db_url(request: pytest.FixtureRequest) -> str:
+    url = os.environ.get("TEST_DATABASE_URL")
+    if not url:
+        return f"sqlite:///{request.getfixturevalue('seeded_db')}"
+    # Only ever drop tables in the test database, never the one DATABASE_URL names.
+    name = psycopg.conninfo.conninfo_to_dict(url)["dbname"]
+    assert "test" in name, f"refusing to drop tables in {name!r}"
+    with psycopg.connect(url) as conn:
+        conn.execute(f"DROP TABLE IF EXISTS {', '.join(TABLES)} CASCADE")
+        seed(conn)
+    return url
+
+
+@pytest.fixture
+def client(db_url: str) -> TestClient:
+    app.dependency_overrides[get_db] = database_from_url(db_url)
     return TestClient(app)

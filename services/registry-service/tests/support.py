@@ -3,7 +3,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
-from db import connect
+from db import Conn, connect, connect_url
 
 FARM_DEMO = "b7e2c0a0-3c1d-4f0a-9a11-0c5d2e6f1001"
 FARM_EAST = "a9c1e4b2-6f70-4d8e-a144-3f8b5c904004"
@@ -37,6 +37,19 @@ def database_from(path: Path) -> Callable[[], Iterator[sqlite3.Connection]]:
 
     def dependency() -> Iterator[sqlite3.Connection]:
         conn = connect(path)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+    return dependency
+
+
+def database_from_url(url: str) -> Callable[[], Iterator[Conn]]:
+    """Stand-in for get_db that opens the database at url."""
+
+    def dependency() -> Iterator[Conn]:
+        conn = connect_url(url)
         try:
             yield conn
         finally:

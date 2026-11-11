@@ -1,4 +1,3 @@
-import sqlite3
 import uuid
 from typing import Any
 from uuid import UUID
@@ -6,7 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Response
 
 import repository
-from db import DbConn, write_transaction
+from db import Conn, DbConn, write_transaction
 from errors import ConflictProblem, require
 from schemas import Farm, FarmCreate, FarmUpdate
 
@@ -49,5 +48,5 @@ def delete_farm(farm_id: UUID, conn: DbConn) -> Response:
     return Response(status_code=204)
 
 
-def _farm_or_404(conn: sqlite3.Connection, farm_id: UUID) -> dict[str, Any]:
+def _farm_or_404(conn: Conn, farm_id: UUID) -> dict[str, Any]:
     return require(repository.get_farm(conn, str(farm_id)), f"Farm {farm_id} not found")

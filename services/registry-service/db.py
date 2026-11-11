@@ -1,12 +1,21 @@
+import re
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
+import psycopg
 from fastapi import Depends
+from psycopg.pq import TransactionStatus
+from psycopg.rows import dict_row
+
+import config
 
 DB_PATH = Path(__file__).resolve().parent / "registry.db"
+
+# `?` and `:name` placeholders as written in the SQL; `::` (a Postgres cast) is left alone.
+_PLACEHOLDER = re.compile(r"\?|(?<!:):(\w+)")
 
 
 def connect(path: Path = DB_PATH) -> sqlite3.Connection:
@@ -24,26 +33,86 @@ def connect(path: Path = DB_PATH) -> sqlite3.Connection:
     return conn
 
 
-def get_db() -> Iterator[sqlite3.Connection]:
-    conn = connect()
+class PgConnection:
+    """A psycopg connection that takes the same SQL and parameters as sqlite3."""
+
+    def __init__(self, url: str) -> None:
+        self._conn = psycopg.connect(url, autocommit=True, row_factory=dict_row)
+
+    def execute(self, sql: str, params: tuple[Any, ...] | dict[str, Any] = ()) -> psycopg.Cursor:
+        sql = _PLACEHOLDER.sub(lambda m: "%s" if m[0] == "?" else f"%({m[1]})s", sql)
+        return self._conn.execute(sql, params or None)
+
+    @property
+    def in_transaction(self) -> bool:
+        status = self._conn.info.transaction_status
+        return status in (TransactionStatus.INTRANS, TransactionStatus.INERROR)
+
+    def close(self) -> None:
+        self._conn.close()
+
+
+Conn = sqlite3.Connection | PgConnection
+
+
+def connect_url(url: str) -> Conn:
+    if url.startswith("sqlite:"):
+        if not url.startswith("sqlite:///"):
+            raise ValueError(f"SQLite DATABASE_URL must start with sqlite:///, got {url!r}")
+        path = Path(url.removeprefix("sqlite:///"))
+        return connect(path if path.is_absolute() else config.SERVICE_DIR / path)
+    return PgConnection(url)
+
+
+def get_db() -> Iterator[Conn]:
+    conn = connect_url(config.database_url())
     try:
         yield conn
     finally:
         conn.close()
 
 
-DbConn = Annotated[sqlite3.Connection, Depends(get_db)]
+DbConn = Annotated[Conn, Depends(get_db)]
+
+
+# Any fixed key works; every Postgres writer takes this one lock, like SQLite's single write lock.
+PG_WRITE_LOCK_KEY = 0x52454749
+
+INTEGRITY_ERRORS: tuple[type[Exception], ...] = (sqlite3.IntegrityError, psycopg.IntegrityError)
 
 
 @contextmanager
-def write_transaction(conn: sqlite3.Connection) -> Iterator[None]:
-    # BEGIN IMMEDIATE takes the write lock up front, so checks made inside the block
-    # cannot be invalidated by another writer before COMMIT.
-    conn.execute("BEGIN IMMEDIATE")
+def write_transaction(conn: Conn) -> Iterator[None]:
+    # SQLite: BEGIN IMMEDIATE takes the write lock up front, so checks made inside the block
+    # cannot be invalidated by another writer before COMMIT. Postgres: an advisory lock held
+    # until COMMIT gives the same guarantee.
+    conn.execute("BEGIN" if isinstance(conn, PgConnection) else "BEGIN IMMEDIATE")
     try:
+        if isinstance(conn, PgConnection):
+            conn.execute("SET LOCAL lock_timeout = '5s'")
+            conn.execute(f"SELECT pg_advisory_xact_lock({PG_WRITE_LOCK_KEY})")
         yield
     except BaseException:
         if conn.in_transaction:
             conn.execute("ROLLBACK")
         raise
     conn.execute("COMMIT")
+
+
+def is_unique_violation(exc: Exception) -> bool:
+    if isinstance(exc, sqlite3.IntegrityError):
+        return exc.sqlite_errorname == "SQLITE_CONSTRAINT_UNIQUE"
+    return isinstance(exc, psycopg.errors.UniqueViolation)
+
+
+def is_foreign_key_violation(exc: Exception) -> bool:
+    if isinstance(exc, sqlite3.IntegrityError):
+        return exc.sqlite_errorname == "SQLITE_CONSTRAINT_FOREIGNKEY"
+    return isinstance(exc, psycopg.errors.ForeignKeyViolation)
+
+
+def order_by_name(conn: Conn) -> str:
+    # SQLite compares text byte-wise; Postgres needs the "C" collation to sort the same way.
+    if isinstance(conn, PgConnection):
+        return 'ORDER BY name COLLATE "C", id COLLATE "C"'
+    return "ORDER BY name, id"

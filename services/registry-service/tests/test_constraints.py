@@ -2,13 +2,13 @@ import pytest
 from support import FARM_DEMO, plot_payload
 
 import repository
-from db import connect, write_transaction
+from db import connect_url, write_transaction
 from errors import ConflictProblem, ValidationProblem
 
 
 @pytest.fixture
-def conn(seeded_db):
-    connection = connect(seeded_db)
+def conn(db_url):
+    connection = connect_url(db_url)
     yield connection
     connection.close()
 

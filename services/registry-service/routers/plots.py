@@ -1,4 +1,3 @@
-import sqlite3
 import uuid
 from typing import Any
 from uuid import UUID
@@ -6,7 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Response
 
 import repository
-from db import DbConn, write_transaction
+from db import Conn, DbConn, write_transaction
 from errors import ConflictProblem, ValidationProblem, require
 from schemas import Plot, PlotCreate, PlotUpdate
 
@@ -65,11 +64,11 @@ def delete_plot(plot_id: UUID, conn: DbConn) -> Response:
     return Response(status_code=204)
 
 
-def _plot_or_404(conn: sqlite3.Connection, plot_id: UUID) -> dict[str, Any]:
+def _plot_or_404(conn: Conn, plot_id: UUID) -> dict[str, Any]:
     return require(repository.get_plot(conn, str(plot_id)), f"Plot {plot_id} not found")
 
 
-def _check_references(conn: sqlite3.Connection, values: dict[str, Any]) -> None:
+def _check_references(conn: Conn, values: dict[str, Any]) -> None:
     problems = [
         f"{field}: unknown {noun} {values[field]!r}"
         for field, (noun, lookup) in _REFERENCES.items()
@@ -79,8 +78,6 @@ def _check_references(conn: sqlite3.Connection, values: dict[str, Any]) -> None:
         raise ValidationProblem("; ".join(problems))
 
 
-def _check_name_free(
-    conn: sqlite3.Connection, farm_id: str, name: str, plot_id: str | None
-) -> None:
+def _check_name_free(conn: Conn, farm_id: str, name: str, plot_id: str | None) -> None:
     if repository.plot_name_taken(conn, farm_id, name, plot_id):
         raise ConflictProblem(f"A plot named {name!r} already exists on this farm")

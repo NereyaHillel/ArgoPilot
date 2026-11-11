@@ -1,6 +1,7 @@
 import sqlite3
 from pathlib import Path
 
+import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from support import FARM_DEMO, UNKNOWN_ID, database_from, plot_payload
@@ -71,6 +72,7 @@ def test_wrong_method_is_a_405_problem_that_lists_allowed_methods(client):
     assert set(response.headers["allow"].split(", ")) == {"GET", "PATCH", "DELETE"}
 
 
+@pytest.mark.sqlite_only
 def test_missing_database_file_returns_503_with_retry_after(tmp_path: Path):
     app.dependency_overrides[get_db] = database_from(tmp_path / "missing.db")
 
@@ -82,6 +84,7 @@ def test_missing_database_file_returns_503_with_retry_after(tmp_path: Path):
     assert not (tmp_path / "missing.db").exists()
 
 
+@pytest.mark.sqlite_only
 def test_locked_database_returns_503_with_retry_after(seeded_db: Path):
     blocker = sqlite3.connect(seeded_db, isolation_level=None)
     blocker.execute("BEGIN IMMEDIATE")
@@ -105,6 +108,7 @@ def test_locked_database_returns_503_with_retry_after(seeded_db: Path):
     assert response.headers["retry-after"] == "5"
 
 
+@pytest.mark.sqlite_only
 def test_database_without_schema_returns_500_problem(tmp_path: Path):
     empty = tmp_path / "empty.db"
     sqlite3.connect(empty).close()
