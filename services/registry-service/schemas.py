@@ -6,10 +6,17 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validat
 from pydantic_core import PydanticCustomError
 
 
+def _no_nul(value: str) -> str:
+    # PostgreSQL text columns cannot store NUL, so every backend rejects it.
+    if "\x00" in value:
+        raise PydanticCustomError("nul", "must not contain NUL characters")
+    return value
+
+
 def _not_blank(value: str) -> str:
     if not value.strip():
         raise PydanticCustomError("blank", "must not be blank")
-    return value
+    return _no_nul(value)
 
 
 def _not_in_future(value: date) -> date:
@@ -20,6 +27,7 @@ def _not_in_future(value: date) -> date:
 
 
 Name = Annotated[str, AfterValidator(_not_blank)]
+RefId = Annotated[str, AfterValidator(_no_nul)]
 PositiveNumber = Annotated[float, Field(gt=0, strict=True, allow_inf_nan=False)]
 Latitude = Annotated[float, Field(ge=-90, le=90, strict=True, allow_inf_nan=False)]
 Longitude = Annotated[float, Field(ge=-180, le=180, strict=True, allow_inf_nan=False)]
@@ -57,12 +65,12 @@ class PlotCreate(_Request):
     farm_id: UUID
     name: Name
     area_m2: PositiveNumber
-    crop_id: str
+    crop_id: RefId
     planting_date: PlantingDate
-    soil_id: str
+    soil_id: RefId
     row_spacing_m: PositiveNumber
     emitter_spacing_m: PositiveNumber
-    emitter_id: str
+    emitter_id: RefId
     lat: Latitude
     lon: Longitude
 
@@ -71,12 +79,12 @@ class PlotUpdate(_PatchRequest):
     farm_id: UUID | None = None
     name: Name | None = None
     area_m2: PositiveNumber | None = None
-    crop_id: str | None = None
+    crop_id: RefId | None = None
     planting_date: PlantingDate | None = None
-    soil_id: str | None = None
+    soil_id: RefId | None = None
     row_spacing_m: PositiveNumber | None = None
     emitter_spacing_m: PositiveNumber | None = None
-    emitter_id: str | None = None
+    emitter_id: RefId | None = None
     lat: Latitude | None = None
     lon: Longitude | None = None
 
