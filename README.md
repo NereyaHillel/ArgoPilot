@@ -23,7 +23,7 @@ services/
     errors.py           RFC 9457 error responses
     config.py           Reads DATABASE_URL
     seed_registry.sh    Builds registry.db (SQLite) with sample data
-    seed_registry_pg.py Creates and seeds the tables in an empty PostgreSQL database
+    seed_registry_pg.py Creates and seeds the registry tables in PostgreSQL
     docker-compose.test.yml  Throwaway PostgreSQL for tests
     tests/              pytest suite
     scripts/            Load test (Locust)
@@ -57,14 +57,14 @@ DATABASE_URL=postgresql://user:password@host:5432/registry
 
 `.env.example` lists both styles; copy it to `.env` and uncomment one. Without `DATABASE_URL` the service uses `registry.db`. Any other URL scheme is an error. The API behaves the same on both databases.
 
-To set up an empty PostgreSQL database, create the tables and sample data with:
+To set up PostgreSQL, create the registry tables and sample data in an existing database with:
 
 ```bash
 cd services/registry-service
 DATABASE_URL=postgresql://user:password@host:5432/registry uv run python seed_registry_pg.py
 ```
 
-The script never deletes anything: if any registry table already exists, it prints a message and exits without changing the database. When PostgreSQL is unreachable the API answers `503`; other unexpected database errors answer `500`. Both use the `UNAVAILABLE` code.
+The script never deletes anything: if any registry table already exists, it prints a message and exits without changing the database. When PostgreSQL is unreachable or busy (lock timeout, deadlock, serialization failure) the API answers `503`; other unexpected database errors answer `500`. Both use the `UNAVAILABLE` code.
 
 ## API
 
@@ -88,6 +88,7 @@ Each test runs against a freshly seeded copy of the database, so `registry.db` i
 To run the suite against PostgreSQL, start the throwaway database and set `TEST_DATABASE_URL`:
 
 ```bash
+cd services/registry-service
 docker compose -f docker-compose.test.yml up -d --wait
 TEST_DATABASE_URL=postgresql://registry:registry@localhost:55432/registry_test uv run pytest
 ```

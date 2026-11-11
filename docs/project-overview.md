@@ -26,7 +26,7 @@
 | **FR-1.4** | Every error is `application/problem+json` (RFC 9457) with `code` ∈ {`VALIDATION`, `NOT_FOUND`, `CONFLICT`, `UNAVAILABLE`} |
 | **NFR-1.1** | `GET` list / by id: **p95 ≤ 100 ms at 10 RPS**. Measure it and report the number |
 | Data | Return **only** the listed fields. Plot names are unique within a farm. Lists are JSON arrays, and an empty list is `200 []` |
-| Storage | One SQLite file, `registry.db`, built by the supplied `seed_registry.sh` (15 rows: 2 crops, 3 soils, 4 emitters, 2 farms, 4 plots) |
+| Storage | SQLite locally and in tests, PostgreSQL in production, chosen by `DATABASE_URL`. SQLite is one file, `registry.db`, built by the supplied `seed_registry.sh`; PostgreSQL is set up by `seed_registry_pg.py` (15 rows: 2 crops, 3 soils, 4 emitters, 2 farms, 4 plots) |
 | Docs | A service README and `docs/judgment-log.md` with at least 2 entries (what the AI agent suggested, what I decided, why) |
 
 ## 3. Requirement → implementation map
@@ -44,7 +44,7 @@
 ## 4. Tech stack
 
 - **Python 3.12**, **FastAPI 0.115** + **Pydantic v2**, **uvicorn**
-- **SQLite** through the standard `sqlite3` module, **no ORM**
+- **SQLite** (default, local and tests) through the standard `sqlite3` module, or **PostgreSQL** (production) through `psycopg`, chosen by `DATABASE_URL`; **no ORM**
 - **uv** for environment and dependencies
 - **pytest** + FastAPI `TestClient`: **122 tests, all passing**
 - **Locust** (run through `uvx`, so it is not a project dependency) for NFR-1.1
@@ -57,7 +57,7 @@ HTTP request
    ▼
 routers/  farms.py · plots.py · catalogues.py   ← HTTP: status codes, transactions, business checks
    ├── schemas.py     ← Pydantic request/response models = validation (FR-1.3) + output shape
-   ├── repository.py  ← all SQL; maps SQLite constraint errors to API errors
+   ├── repository.py  ← all SQL; maps database constraint errors to API errors
    ├── db.py          ← per-request connection (FastAPI dependency) + write_transaction()
    └── errors.py      ← RFC 9457 problem documents for every failure (FR-1.4)
 main.py               ← creates the app, registers error handlers, includes routers, GET /health
@@ -108,7 +108,7 @@ Catalogue references (`crop_id`, `soil_id`, `emitter_id`, and `farm_id`) are che
 
 - `ApiProblem` subclasses (`ValidationProblem`, `NotFoundProblem`, `ConflictProblem`, `UnavailableProblem`) carry `status` and `code`.
 - Handlers also convert **framework** errors: unknown route → 404 `NOT_FOUND`, wrong method → 405 with a correct `Allow` header, malformed or non-UTF-8 JSON → 422 `VALIDATION`.
-- **"Database unreachable" → 503 `UNAVAILABLE` + `Retry-After: 5`** when SQLite reports `CANTOPEN` (file missing), `BUSY` or `LOCKED`. The connection opens with `mode=rw`, so a missing file fails instead of SQLite silently creating an empty database.
+- **"Database unreachable" → 503 `UNAVAILABLE` + `Retry-After: 5`** when SQLite reports `CANTOPEN` (file missing), `BUSY` or `LOCKED`, and on PostgreSQL when the server is unreachable or busy (connection failures, lock timeouts, deadlocks, serialization failures). The connection opens with `mode=rw`, so a missing file fails instead of SQLite silently creating an empty database.
 - Any other database error or unexpected exception is logged and returns 500, still as problem+json.
 
 ### 6.3 Uniqueness and race conditions, `db.py` + `repository.py`
@@ -184,7 +184,7 @@ That is **5× under the 100 ms budget**. Caveats: it was measured on the seed da
 
 | Current | Why it's fine for P1 | Next step |
 | --- | --- | --- |
-| SQLite, single writer | Required by the spec, and far above 10 RPS | PostgreSQL. Only `repository.py`/`db.py` change |
+| SQLite by default, PostgreSQL in production | SQLite is required by the spec and is far above 10 RPS; PostgreSQL is now supported through `DATABASE_URL` | Done: `db.py` picks the backend from `DATABASE_URL` |
 | No pagination | Small dataset | Cursor pagination on `(name, id)`, which matches the sort order |
 | No auth / tenancy | Not in the spec | JWT, farms scoped to an owner |
 | No migrations | The schema is given by the seed | Alembic / versioned SQL |
