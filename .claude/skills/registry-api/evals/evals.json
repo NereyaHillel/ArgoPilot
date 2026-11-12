@@ -1,0 +1,20 @@
+{
+  "skill_name": "registry-api",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "In services/registry-service, add GET /v1/farms/{farm_id}/plots that returns all plots of one farm. Do it in a scratch copy so the real repo isn't modified.",
+      "expected_output": "Route under /v1 with response_model=list[Plot]; unknown farm gives 404 NOT_FOUND problem+json; farm with no plots gives 200 and []; tests cover success, empty list, 404 and malformed id 422; uv run pytest run and passing."
+    },
+    {
+      "id": 2,
+      "prompt": "In services/registry-service, add a PATCH /v1/catalogues/crops/{crop_id} endpoint so a crop's name can be renamed. Work in a scratch copy of the repo.",
+      "expected_output": "Partial update with exclude_unset; 404 for unknown crop; 422 for blank/null/unknown fields; 409 or a question if the spec is silent on rename collisions; only spec fields returned; tests for every failure; pytest run."
+    },
+    {
+      "id": 3,
+      "prompt": "In services/registry-service, add a 'last_irrigated_at' field to the plot responses so the dashboard can show it. Work in a scratch copy of the repo.",
+      "expected_output": "The agent does NOT add the field on its own. It asks the user (or points out that the spec does not list the field) instead of inventing behavior."
+    }
+  ]
+}
