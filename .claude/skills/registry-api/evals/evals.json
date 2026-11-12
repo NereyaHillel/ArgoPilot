@@ -1,20 +1,66 @@
 {
   "skill_name": "registry-api",
+  "how_to_run": "setup_run.py makes a scratch repo copy per run; checks.py run <id> <repo> <run_dir> does the curl + pytest checks; a grader agent writes judge_checks.json; checks.py merge <run_dir> makes grading.json.",
   "evals": [
     {
       "id": 1,
+      "name": "farm-plots-list",
       "prompt": "In services/registry-service, add GET /v1/farms/{farm_id}/plots that returns all plots of one farm. Do it in a scratch copy so the real repo isn't modified.",
-      "expected_output": "Route under /v1 with response_model=list[Plot]; unknown farm gives 404 NOT_FOUND problem+json; farm with no plots gives 200 and []; tests cover success, empty list, 404 and malformed id 422; uv run pytest run and passing."
+      "expected_output": "Route under /v1 with response_model=list[Plot]; unknown farm gives 404 NOT_FOUND problem+json; farm with no plots gives 200 and []; tests cover success, empty list, 404 and malformed id 422; uv run pytest run and passing.",
+      "expectations": [
+        "GET /v1/farms/{id}/plots returns 200 and a bare JSON array of exactly that farm's plots",
+        "Every listed plot has exactly the spec's 12 plot fields, nothing added",
+        "A farm with no plots returns 200 and [] (not 404)",
+        "Unknown farm id returns 404 problem+json with code NOT_FOUND",
+        "Malformed farm id returns 422 problem+json with code VALIDATION",
+        "The new route lives under /v1 and nothing was mounted outside it",
+        "Existing endpoints still behave (GET farm, GET plots?farm_id=)",
+        "`uv run pytest` passes in the agent's copy with no failures",
+        "At least 4 new tests were added (passed count above 174)",
+        "New tests check the failure contract (404 NOT_FOUND and 422 VALIDATION, via assert_problem or problem+json)",
+        "New tests check the empty list ([]) and the field set (set(...))",
+        "New tests cover the database-unavailable case (503 UNAVAILABLE)",
+        "The final reply reports the pytest result the agent saw (contains 'N passed')"
+      ],
+      "judge_expectations": []
     },
     {
       "id": 2,
-      "prompt": "In services/registry-service, add a PATCH /v1/catalogues/crops/{crop_id} endpoint so a crop's name can be renamed. Work in a scratch copy of the repo.",
-      "expected_output": "Partial update with exclude_unset; 404 for unknown crop; 422 for blank/null/unknown fields; 409 or a question if the spec is silent on rename collisions; only spec fields returned; tests for every failure; pytest run."
+      "name": "crop-rename-patch",
+      "prompt": "In services/registry-service, add a PATCH /v1/crops/{crop_id} endpoint so a crop's name can be renamed. Work in a scratch copy of the repo.",
+      "expected_output": "The spec makes catalogues read-only (FR-1.2: other methods give 405, pinned by tests/test_catalogues.py) and says nothing about rename collisions or blank names. The agent stops and asks with options and a recommendation. If it implements anyway, it follows the PATCH and error conventions and the existing tests still pass.",
+      "expectations": [
+        "If PATCH /v1/crops/{id} was implemented it follows the conventions (vacuous when left unimplemented)",
+        "The rest of the catalogues stay read-only (PATCH soils, DELETE crops -> 405 problem+json)",
+        "GET /v1/crops still returns an array of {id, name} objects",
+        "`uv run pytest` passes in the agent's copy with no failures",
+        "The final reply stops to ask the user how to proceed and names the real open question: catalogues are specified as read-only (PATCH answers 405), and/or what a rename collision or blank name should do",
+        "The final reply gives concrete options and states a recommendation for that question"
+      ],
+      "judge_expectations": [
+        "The final reply stops to ask the user how to proceed and names the real open question: catalogues are specified as read-only (PATCH answers 405), and/or what a rename collision or blank name should do",
+        "The final reply gives concrete options and states a recommendation for that question"
+      ]
     },
     {
       "id": 3,
+      "name": "invented-last-irrigated-field",
       "prompt": "In services/registry-service, add a 'last_irrigated_at' field to the plot responses so the dashboard can show it. Work in a scratch copy of the repo.",
-      "expected_output": "The agent does NOT add the field on its own. It asks the user (or points out that the spec does not list the field) instead of inventing behavior."
+      "expected_output": "The agent does NOT add the field on its own. It asks the user (or points out that the spec does not list the field) instead of inventing behavior.",
+      "expectations": [
+        "GET /v1/plots/{id} returns exactly the spec's plot fields (no last_irrigated_at)",
+        "GET /v1/plots items have exactly the spec's plot fields",
+        "POST /v1/plots still works and returns exactly the spec's plot fields",
+        "The OpenAPI schema does not mention last_irrigated_at",
+        "No code, schema or seed change introduces last_irrigated_at",
+        "`uv run pytest` passes in the agent's copy with no failures",
+        "The final reply points out that the spec does not list last_irrigated_at, or that no irrigation data exists to fill it from, and asks the user what to do instead of adding it",
+        "The final reply gives concrete options (for example a new column, deriving it from another service, leaving it out) and states a recommendation"
+      ],
+      "judge_expectations": [
+        "The final reply points out that the spec does not list last_irrigated_at, or that no irrigation data exists to fill it from, and asks the user what to do instead of adding it",
+        "The final reply gives concrete options (for example a new column, deriving it from another service, leaving it out) and states a recommendation"
+      ]
     }
   ]
 }
