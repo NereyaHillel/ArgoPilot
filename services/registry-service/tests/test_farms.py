@@ -1,6 +1,7 @@
 import uuid
 
 import pytest
+from fastapi.testclient import TestClient
 from support import (
     FARM_DEMO,
     FARM_EAST,
@@ -9,7 +10,13 @@ from support import (
     PLOT_NORTH,
     PLOT_WEST,
     UNKNOWN_ID,
+    database_from,
+    plot_payload,
 )
+from test_errors import assert_problem
+
+from db import get_db
+from main import app
 
 
 def test_create_farm_returns_201_with_only_spec_fields(client):
@@ -144,3 +151,55 @@ def test_empty_collections_return_200_and_empty_arrays(client):
 
     assert (farms.status_code, farms.json()) == (200, [])
     assert (plots.status_code, plots.json()) == (200, [])
+
+
+def test_farm_area_sums_the_areas_of_its_plots(client):
+    response = client.get(f"/v1/farms/{FARM_DEMO}/area")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == {"area_m2"}
+    assert body["area_m2"] == 1800
+
+
+def test_farm_area_only_counts_plots_of_that_farm(client):
+    assert client.get(f"/v1/farms/{FARM_EAST}/area").json() == {"area_m2": 1900}
+
+
+def test_farm_area_follows_plot_changes(client):
+    client.post("/v1/plots", json=plot_payload(name="Extra", area_m2=250.5))
+    assert client.get(f"/v1/farms/{FARM_DEMO}/area").json() == {"area_m2": 2050.5}
+
+    client.delete(f"/v1/plots/{PLOT_NORTH}")
+    assert client.get(f"/v1/farms/{FARM_DEMO}/area").json() == {"area_m2": 1050.5}
+
+
+def test_farm_area_without_plots_is_zero(client):
+    farm_id = client.post("/v1/farms", json={"name": "Empty"}).json()["id"]
+
+    response = client.get(f"/v1/farms/{farm_id}/area")
+
+    assert response.status_code == 200
+    assert response.json() == {"area_m2": 0}
+
+
+def test_farm_area_of_unknown_farm_returns_404(client):
+    body = assert_problem(client.get(f"/v1/farms/{UNKNOWN_ID}/area"), 404, "NOT_FOUND")
+
+    assert body["detail"] == f"Farm {UNKNOWN_ID} not found"
+
+
+def test_farm_area_with_malformed_id_returns_422(client):
+    body = assert_problem(client.get("/v1/farms/not-a-uuid/area"), 422, "VALIDATION")
+
+    assert body["detail"].startswith("farm_id: ")
+
+
+@pytest.mark.sqlite_only
+def test_farm_area_returns_503_when_database_is_unavailable(tmp_path):
+    app.dependency_overrides[get_db] = database_from(tmp_path / "missing.db")
+
+    response = TestClient(app).get(f"/v1/farms/{FARM_DEMO}/area")
+
+    assert_problem(response, 503, "UNAVAILABLE")
+    assert response.headers["retry-after"] == "5"

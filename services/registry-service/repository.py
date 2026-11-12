@@ -86,6 +86,13 @@ def count_plots(conn: Conn, farm_id: str) -> int:
     return row["n"]
 
 
+def total_plot_area(conn: Conn, farm_id: str) -> float:
+    row = conn.execute(
+        "SELECT COALESCE(SUM(area_m2), 0) AS total FROM plots WHERE farm_id = ?", (farm_id,)
+    ).fetchone()
+    return float(row["total"])
+
+
 def delete_farm(conn: Conn, farm_id: str) -> None:
     try:
         conn.execute("DELETE FROM farms WHERE id = ?", (farm_id,))

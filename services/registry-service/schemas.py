@@ -62,6 +62,10 @@ class Farm(BaseModel):
     name: str
 
 
+class FarmArea(BaseModel):
+    area_m2: float
+
+
 class PlotCreate(_Request):
     farm_id: UUID
     name: Name

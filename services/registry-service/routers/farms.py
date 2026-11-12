@@ -7,7 +7,7 @@ from fastapi import APIRouter, Response
 import repository
 from db import Conn, DbConn, write_transaction
 from errors import ConflictProblem, require
-from schemas import Farm, FarmCreate, FarmUpdate
+from schemas import Farm, FarmArea, FarmCreate, FarmUpdate
 
 router = APIRouter(prefix="/v1/farms", tags=["farms"])
 
@@ -28,6 +28,12 @@ def list_farms(conn: DbConn) -> list[dict[str, Any]]:
 @router.get("/{farm_id}", response_model=Farm)
 def get_farm(farm_id: UUID, conn: DbConn) -> dict[str, Any]:
     return _farm_or_404(conn, farm_id)
+
+
+@router.get("/{farm_id}/area", response_model=FarmArea)
+def get_farm_area(farm_id: UUID, conn: DbConn) -> dict[str, Any]:
+    _farm_or_404(conn, farm_id)
+    return {"area_m2": repository.total_plot_area(conn, str(farm_id))}
 
 
 @router.patch("/{farm_id}", response_model=Farm)

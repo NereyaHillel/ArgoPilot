@@ -47,3 +47,9 @@
 - **Problem:** `plots` keeps `id` as its primary key, so every new plot needs one. The client could send it, or the server could generate it.
 - **My answer:** The server generates the id and returns it in the POST response.
 - **Reason:** Routes use `/v1/plots/{id}`, and the original design already generated ids on the server.
+
+## 9. Farm area endpoint
+
+- **Problem:** The spec doesn't define `GET /v1/farms/{id}/area`: its response body, or what a farm with no plots returns.
+- **My answer:** It returns `{"area_m2": <sum of the farm's plot areas>}`. A farm with no plots returns `200` with `area_m2` of `0`. An unknown farm returns `404`.
+- **Reason:** The field reuses the plot field name, so the unit is clear and nothing else is exposed. Zero is the true sum of no plots, and an existing farm with no plots is a valid state, like an empty list.
